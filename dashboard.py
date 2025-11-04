@@ -1,96 +1,108 @@
-import streamlit as st
-import plotly.express as px
-from datetime import datetime
+# app.py
+import dash
+from dash import dcc, html
+from dash.dependencies import Output, Input
+import plotly.graph_objs as go
 from db_utils import get_metrics
 from utils import get_queue_depth, check_threshold
 from config import QUEUES
 
-# ---- Page Config ----
-st.set_page_config(page_title="MQ Monitoring Dashboard", layout="wide")
-st.title("RabbitMQ Queue Monitoring Dashboard")
+# ---- Dash App ----
+app = dash.Dash(__name__)
+app.title = "RabbitMQ Queue Monitoring Dashboard"
 
-# refresh interval in milliseconds
-REFRESH_INTERVAL = 2000  # 2 seconds
+# ---- Layout ----
+def generate_layout():
+    current_status_rows = []
+    progress_bars = []
 
-# --- autorefresh ---
-st_autorefresh_fn = None
-try:
-    st_autorefresh_fn = st.experimental_autorefresh
-except Exception:
-    try:
-        from streamlit_autorefresh import st_autorefresh as _sa
-        st_autorefresh_fn = _sa
-    except Exception:
-        st.warning(
-            "Auto-refresh not available. Upgrade Streamlit or install `streamlit-autorefresh`."
-        )
-
-if st_autorefresh_fn:
-    st_autorefresh_fn(interval=REFRESH_INTERVAL, key="mq_refresh")
-
-# ---- Tabs ----
-tabs = st.tabs(["Current Queue Status", "Historical Trends"])
-
-# --- Current Status Tab ---
-with tabs[0]:
-    metrics = []
     for vhost, queue_name, max_length, threshold in QUEUES:
         depth = get_queue_depth(vhost, queue_name)
         percent, alert = check_threshold(depth, max_length, threshold)
-        metrics.append({
-            "Vhost": vhost,
-            "Queue": queue_name,
-            "Depth": depth,
-            "Max Length": max_length,
-            "Threshold": threshold,
-            "Percent": percent,
-            "Alert": alert
-        })
+        row_color = "#ff4d4d" if alert else "transparent"
+        
+        # Table row
+        current_status_rows.append(
+            html.Tr([
+                html.Td(vhost),
+                html.Td(queue_name),
+                html.Td(depth),
+                html.Td(max_length),
+                html.Td(threshold),
+                html.Td(f"{percent:.2f}%"),
+                html.Td("ALERT" if alert else "")
+            ], style={"backgroundColor": row_color, "color": "white" if alert else "black"})
+        )
 
-    # Display table
-    def format_metrics_table(metrics):
-        headers = list(metrics[0].keys())
-        table_data = [headers] + [[m[h] for h in headers] for m in metrics]
-        return table_data
+        # Progress bar
+        progress_bars.append(
+            html.Div([
+                html.Div(f"{vhost}/{queue_name}", style={"width": "20%", "display": "inline-block"}),
+                html.Div(
+                    html.Div(style={
+                        "width": f"{min(max(int(percent), 0), 100)}%",
+                        "backgroundColor": "#ff4d4d" if alert else "#00cc96",
+                        "height": "20px"
+                    }),
+                    style={"width": "75%", "backgroundColor": "#e0e0e0", "display": "inline-block"}
+                ),
+                html.Span(f" {percent:.2f}% | Threshold: {threshold}")
+            ], style={"marginBottom": "10px"})
+        )
 
-    table_data = format_metrics_table(metrics)
-    st.subheader("Queue Metrics")
-    st.table(table_data)
+    # Layout
+    layout = html.Div([
+        html.H1("RabbitMQ Queue Monitoring Dashboard"),
+        html.H2("Current Queue Status"),
+        html.Table([
+            html.Thead(html.Tr([
+                html.Th("Vhost"), html.Th("Queue"), html.Th("Depth"),
+                html.Th("Max Length"), html.Th("Threshold"),
+                html.Th("Percent"), html.Th("Alert")
+            ])),
+            html.Tbody(current_status_rows)
+        ], style={"width": "100%", "border": "1px solid black", "borderCollapse": "collapse", "marginBottom": "20px"}),
+        html.H2("Queue Utilization"),
+        html.Div(progress_bars),
+        html.H2("Historical Trends (Last 24 Hours)"),
+        html.Div([
+            dcc.Graph(id=f"{vhost}_{queue_name}_trend") for vhost, queue_name, _, _ in QUEUES
+        ])
+    ])
+    return layout
 
-    # Progress bars
-    st.subheader("Queue Utilization")
-    for m in metrics:
-        name = f"{m['Vhost']}/{m['Queue']}"
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            st.write(name)
-        with col2:
-            pct = max(0, min(int(m["Percent"]), 100))
-            st.progress(pct)
-            st.write(f"Usage: {m['Percent']:.2f}% | Threshold: {m['Threshold']}")
+app.layout = generate_layout
 
-# --- Historical Trends Tab ---
-with tabs[1]:
-    st.subheader("Queue Depth Trends (Last 24 Hours)")
-    for vhost, queue_name, _, _ in QUEUES:
-        data = get_metrics(vhost, queue_name, limit=288)  # 24h at 5-min interval
-        if data:
-            # Convert timestamps to datetime objects
-            timestamps = [datetime.fromisoformat(d[0]) if isinstance(d[0], str) else d[0] for d in data]
-            depths = [d[1] for d in data]
+# ---- Callbacks for historical trends ----
+for vhost, queue_name, _, _ in QUEUES:
+    def make_callback(vhost=vhost, queue_name=queue_name):
+        def update_graph(n_intervals):
+            data = get_metrics(vhost, queue_name, limit=288)  # last 24h
+            if not data:
+                return go.Figure()
+            
+            timestamps = [item[0] for item in data]
+            depths = [item[1] for item in data]
 
-            # Build Plotly figure
-            fig = px.line(
-                x=timestamps,
-                y=depths,
-                title=f"Queue Depth Trend: {vhost}/{queue_name}",
-                labels={"x": "Time", "y": "Queue Depth"},
+            fig = go.Figure(
+                data=[go.Scatter(x=timestamps, y=depths, mode='lines', name=f"{vhost}/{queue_name}")],
+                layout=go.Layout(title=f"Queue Depth Trend: {vhost}/{queue_name}",
+                                 xaxis_title="Time", yaxis_title="Depth")
             )
+            return fig
+        return update_graph
 
-            # Safe key for Streamlit
-            raw_key = f"chart_{vhost}_{queue_name}"
-            safe_key = "".join(c if c.isalnum() else "_" for c in raw_key)
+    app.callback(
+        Output(f"{vhost}_{queue_name}_trend", "figure"),
+        Input("interval-component", "n_intervals")
+    )(make_callback())
 
-            st.plotly_chart(fig, use_container_width=True, key=safe_key)
-        else:
-            st.write(f"No historical data for {vhost}/{queue_name}")
+# ---- Auto-refresh interval ----
+app.layout = html.Div([
+    dcc.Interval(id="interval-component", interval=2000, n_intervals=0),
+    generate_layout()
+])
+
+# ---- Run App ----
+if __name__ == "__main__":
+    app.run_server(debug=True)
