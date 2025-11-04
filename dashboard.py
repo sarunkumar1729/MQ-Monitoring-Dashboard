@@ -1,7 +1,6 @@
-
 import streamlit as st
-import pandas as pd
 import plotly.express as px
+from datetime import datetime
 from db_utils import get_metrics
 from utils import get_queue_depth, check_threshold
 from config import QUEUES
@@ -13,24 +12,20 @@ st.title("RabbitMQ Queue Monitoring Dashboard")
 # refresh interval in milliseconds
 REFRESH_INTERVAL = 2000  # 2 seconds
 
-# --- autorefresh: prefer streamlit.experimental_autorefresh, fallback to streamlit-autorefresh package
+# --- autorefresh ---
 st_autorefresh_fn = None
 try:
-    # Newer Streamlit versions expose this
     st_autorefresh_fn = st.experimental_autorefresh
 except Exception:
     try:
-        # Install with: python -m pip install streamlit-autorefresh
         from streamlit_autorefresh import st_autorefresh as _sa
         st_autorefresh_fn = _sa
     except Exception:
         st.warning(
-            "Auto-refresh not available. To enable it, either upgrade Streamlit or install `streamlit-autorefresh`:\n"
-            "`python -m pip install --upgrade streamlit` OR `python -m pip install streamlit-autorefresh`"
+            "Auto-refresh not available. Upgrade Streamlit or install `streamlit-autorefresh`."
         )
 
 if st_autorefresh_fn:
-    # st_autorefresh returns an integer that increments on each refresh (unused here)
     st_autorefresh_fn(interval=REFRESH_INTERVAL, key="mq_refresh")
 
 # ---- Tabs ----
@@ -52,30 +47,27 @@ with tabs[0]:
             "Alert": alert
         })
 
-    df = pd.DataFrame(metrics)
+    # Display table
+    def format_metrics_table(metrics):
+        headers = list(metrics[0].keys())
+        table_data = [headers] + [[m[h] for h in headers] for m in metrics]
+        return table_data
 
-    # Highlight alerts in table using Styler (safe for newer Streamlit)
-    def highlight_alert(row):
-        return ['background-color: red; color: white' if row["Alert"] else '' for _ in row]
+    table_data = format_metrics_table(metrics)
+    st.subheader("Queue Metrics")
+    st.table(table_data)
 
-    try:
-        styled = df.style.apply(highlight_alert, axis=1)
-        st.dataframe(styled, use_container_width=True)
-    except Exception:
-        # fallback: plain table if styling not supported
-        st.dataframe(df, use_container_width=True)
-
-    # Show progress bars with labels
+    # Progress bars
     st.subheader("Queue Utilization")
-    for _, row in df.iterrows():
-        name = f"{row['Vhost']}/{row['Queue']}"
+    for m in metrics:
+        name = f"{m['Vhost']}/{m['Queue']}"
         col1, col2 = st.columns([1, 4])
         with col1:
             st.write(name)
         with col2:
-            pct = max(0, min(int(row["Percent"]), 100))
+            pct = max(0, min(int(m["Percent"]), 100))
             st.progress(pct)
-            st.write(f"Usage: {row['Percent']:.2f}% | Threshold: {row['Threshold']}")
+            st.write(f"Usage: {m['Percent']:.2f}% | Threshold: {m['Threshold']}")
 
 # --- Historical Trends Tab ---
 with tabs[1]:
@@ -83,19 +75,19 @@ with tabs[1]:
     for vhost, queue_name, _, _ in QUEUES:
         data = get_metrics(vhost, queue_name, limit=288)  # 24h at 5-min interval
         if data:
-            trend_df = pd.DataFrame(data, columns=["Timestamp", "Depth"])
-            trend_df["Timestamp"] = pd.to_datetime(trend_df["Timestamp"])
-            trend_df.set_index("Timestamp", inplace=True)
+            # Convert timestamps to datetime objects
+            timestamps = [datetime.fromisoformat(d[0]) if isinstance(d[0], str) else d[0] for d in data]
+            depths = [d[1] for d in data]
 
             # Build Plotly figure
             fig = px.line(
-                trend_df,
-                y="Depth",
+                x=timestamps,
+                y=depths,
                 title=f"Queue Depth Trend: {vhost}/{queue_name}",
-                labels={"Depth": "Queue Depth", "Timestamp": "Time"},
+                labels={"x": "Time", "y": "Queue Depth"},
             )
 
-            # create safe unique key (replace non-alnum)
+            # Safe key for Streamlit
             raw_key = f"chart_{vhost}_{queue_name}"
             safe_key = "".join(c if c.isalnum() else "_" for c in raw_key)
 
