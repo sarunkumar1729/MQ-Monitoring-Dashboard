@@ -4,4 +4,5 @@ numpy>=1.26.0,<2.0.0
 plotly==5.17.0
 nest-asyncio>=1.6.0
 requests>=2.32.0,<3.0.0
+retrying>=1.4.3,<2.0.0
 retrying==1.4.2
