@@ -1,15 +1,24 @@
 import pika
-from config import RABBITMQ_HOST
+from config import RABBITMQ_URL
+
+# def get_queue_depth(vhost, queue_name):
+#     connection = pika.BlockingConnection(
+#         pika.ConnectionParameters(
+#             host=RABBITMQ_HOST,
+#             port=5672,
+#             virtual_host=vhost,
+#             credentials=pika.PlainCredentials("guest", "guest")
+#         )
+#     )
+#     channel = connection.channel()
+#     queue = channel.queue_declare(queue=queue_name, passive=True)
+#     depth = queue.method.message_count
+#     connection.close()
+#     return depth
 
 def get_queue_depth(vhost, queue_name):
-    connection = pika.BlockingConnection(
-        pika.ConnectionParameters(
-            host=RABBITMQ_HOST,
-            port=5672,
-            virtual_host=vhost,
-            credentials=pika.PlainCredentials("guest", "guest")
-        )
-    )
+    params = pika.URLParameters(RABBITMQ_URL)
+    connection = pika.BlockingConnection(params)
     channel = connection.channel()
     queue = channel.queue_declare(queue=queue_name, passive=True)
     depth = queue.method.message_count
@@ -21,3 +30,5 @@ def check_threshold(depth, max_length, threshold_percent):
         return 0, False
     percent = (depth / max_length) * 100
     return percent, percent >= threshold_percent
+
+

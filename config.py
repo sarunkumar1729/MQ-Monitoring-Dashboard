@@ -1,12 +1,12 @@
 # RabbitMQ Config
 RABBITMQ_HOST = "localhost"
-
+RABBITMQ_URL = "amqps://kwvizzuf:fyF1bexQjw7vJi7vTwl8ONm_Gg3XRGFj@armadillo.rmq.cloudamqp.com/kwvizzuf"
 # Define queues to monitor (vhost, queue_name, max_length, threshold%)
 QUEUES = [
-    ("Finance", "payments", 1000, 80),
-    ("Finance", "invoices", 500, 70),
-    ("Orders", "new_orders", 2000, 85),
-    ("Orders", "failed_orders", 300, 60)
+    ("kwvizzuf", "Finance_invoices", 1000, 80),
+    ("kwvizzuf", "Finance_payments", 500, 70),
+    ("kwvizzuf", "Orders_failed_orders", 2000, 85),
+    ("kwvizzuf", "Orders_new_orders", 300, 60)
 ]
 
 # Email Config (for alerts)
